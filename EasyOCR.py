@@ -67,6 +67,8 @@ class WorkerEasyOCR(QtCore.QThread):
 
     def __init__(self, lista_recortes_lineas):
         super().__init__()
+        self.setWindowTitle("EasyOCR - 1")
+        self.resize(1500, 900) 
         self.lista_recortes_lineas = lista_recortes_lineas
 
     def run(self):
