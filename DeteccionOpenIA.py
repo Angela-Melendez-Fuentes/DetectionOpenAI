@@ -41,10 +41,6 @@ def extraer_documento(img):
     return img, False
 
 def limpiar_fondo_y_cuadricula(img_color):
-    """
-    Limpieza por morfología matemática (geometría de las líneas)
-    Preserva el texto sin importar el color de la tinta y borra la cuadrícula de la libreta.
-    """
     gray = cv2.cvtColor(img_color, cv2.COLOR_BGR2GRAY)
     thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 21, 10)
     
@@ -64,7 +60,7 @@ def limpiar_fondo_y_cuadricula(img_color):
     return limpia_color
 
 # =========================================================
-# 2. HILO PARA OPENAI (LÍNEA POR LÍNEA)
+# 2. HILO PARA OPENAI
 # =========================================================
 class WorkerOpenAI(QtCore.QThread):
     linea_procesada = QtCore.pyqtSignal(int, np.ndarray, str)
@@ -74,17 +70,14 @@ class WorkerOpenAI(QtCore.QThread):
     def __init__(self, lista_recortes_lineas):
         super().__init__()
         self.lista_recortes_lineas = lista_recortes_lineas
-        # Requiere la variable de entorno OPENAI_API_KEY configurada en tu sistema
         self.client = OpenAI() 
 
     def run(self):
         try:
             for index, img_linea in enumerate(self.lista_recortes_lineas):
-                # Convertir recorte OpenCV a Base64 en memoria RAM
                 _, buffer = cv2.imencode('.jpg', img_linea)
                 base64_image = base64.b64encode(buffer).decode('utf-8')
 
-                # Llamar a GPT-4o
                 response = self.client.chat.completions.create(
                     model="gpt-4o",
                     messages=[
@@ -94,9 +87,7 @@ class WorkerOpenAI(QtCore.QThread):
                                 {"type": "text", "text": "Transcribe el texto manuscrito de esta imagen. Devuelve ÚNICAMENTE el texto transcrito, sin comillas, sin formato markdown y sin ningún comentario adicional."},
                                 {
                                     "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:image/jpeg;base64,{base64_image}"
-                                    },
+                                    "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"},
                                 },
                             ],
                         }
@@ -113,14 +104,13 @@ class WorkerOpenAI(QtCore.QThread):
             self.error_detectado.emit(f"Error con la API de OpenAI:\n{str(e)}")
 
 # =========================================================
-# 3. INTERFAZ GRÁFICA Y CONTROLADOR
+# 3. INTERFAZ GRÁFICA
 # =========================================================
 class VisorImagen(QtWidgets.QLabel):
     def __init__(self):
         super().__init__()  
         self.setFrameShape(QtWidgets.QFrame.Shape.Box) 
         self.setLineWidth(2)
-        self.setScaledContents(False) 
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
         self.setMinimumSize(350, 400)
@@ -129,18 +119,16 @@ class Window(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Detector de Escritura a Mano + OpenAI (GPT-4o)")
-        self.resize(1500, 900) 
+        self.resize(1200, 750) 
         
         self.OpenCV_image = None  
         self.procesedImage = None 
         self.img_lineas = None
         self.img_caracteres = None
         
-        self._path = None
         self.palabra_count = 0    
         self.palabra_count_ocr = 0 
         self.caracteres_count_ocr = 0 
-        self.worker = None 
         
         self.crear_widgets()
         self.configurar_layout()
@@ -159,7 +147,6 @@ class Window(QtWidgets.QWidget):
         for btn in [self.botonAbrir, self.botonProcesarImagenEntrada, self.botonLimpiar]:
             btn.setMinimumHeight(50) 
             btn.setFont(QtGui.QFont("Arial", 12, QtGui.QFont.Weight.Bold))
-            btn.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
 
         self.botonProcesarImagenEntrada.setEnabled(False)
         self.botonLimpiar.setEnabled(False)
@@ -186,18 +173,16 @@ class Window(QtWidgets.QWidget):
         self.label_contador_ocr.setFont(QtGui.QFont("Arial", 12, QtGui.QFont.Weight.Bold))
 
         self.tabs_derecha = QtWidgets.QTabWidget()
-        self.tabs_derecha.setStyleSheet("QTabBar::tab { height: 40px; padding: 0 20px; font-weight: bold; font-size: 11pt; }")
+        self.tabs_derecha.setStyleSheet("QTabBar::tab { height: 40px; padding: 0 20px; font-weight: bold; }")
 
         self.tab_lineas_ocr = QtWidgets.QWidget()
         layout_lineas_ocr = QtWidgets.QVBoxLayout(self.tab_lineas_ocr)
-        
         self.scroll_ocr = QtWidgets.QScrollArea()
         self.scroll_ocr.setWidgetResizable(True)
         self.scroll_widget = QtWidgets.QWidget()
         self.scroll_vbox = QtWidgets.QVBoxLayout(self.scroll_widget)
         self.scroll_vbox.setAlignment(Qt.AlignmentFlag.AlignTop) 
         self.scroll_ocr.setWidget(self.scroll_widget)
-        
         layout_lineas_ocr.addWidget(self.scroll_ocr)
         layout_lineas_ocr.addWidget(self.label_contador_ocr)
 
@@ -214,36 +199,27 @@ class Window(QtWidgets.QWidget):
         layout_caracteres.addWidget(self.viewer3)
         layout_caracteres.addWidget(self.label_contador_cv)
         
-        self.tabs_derecha.addTab(self.tab_lineas_ocr, "📄 OpenAI: Línea por Línea")
-        self.tabs_derecha.addTab(self.tab_transcripcion, "📝 OpenAI: Texto Completo")
+        self.tabs_derecha.addTab(self.tab_lineas_ocr, "📄 OpenAI: Por Líneas")
+        self.tabs_derecha.addTab(self.tab_transcripcion, "📝 OpenAI: Completo")
         self.tabs_derecha.addTab(self.tab_lineas, "⬛ OpenCV: Líneas")
         self.tabs_derecha.addTab(self.tab_caracteres, "🟩 OpenCV: Caracteres")
 
     def configurar_layout(self):
         layout_principal = QtWidgets.QVBoxLayout(self)
-        layout_principal.setContentsMargins(20, 20, 20, 20) 
-        layout_principal.setSpacing(15)
-        
         layout_botones = QtWidgets.QHBoxLayout()
         layout_botones.addWidget(self.botonAbrir)
         layout_botones.addWidget(self.botonProcesarImagenEntrada)
         layout_botones.addWidget(self.botonLimpiar)
         layout_principal.addLayout(layout_botones)
-
         layout_cuerpo = QtWidgets.QHBoxLayout()
-        
         layout_izq = QtWidgets.QVBoxLayout()
         lbl_izq = QtWidgets.QLabel("IMAGEN ORIGINAL")
         lbl_izq.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl_izq.setFont(QtGui.QFont("Arial", 12, QtGui.QFont.Weight.Bold))
-        lbl_izq.setStyleSheet("color: #333; background-color: #e6e6e6; padding: 10px; border-radius: 3px;")
-        
         layout_izq.addWidget(lbl_izq)
         layout_izq.addWidget(self.viewer)
-        
         layout_cuerpo.addLayout(layout_izq, 1)        
         layout_cuerpo.addWidget(self.tabs_derecha, 1) 
-
         layout_principal.addLayout(layout_cuerpo)
 
     def conectar_senales(self):
@@ -257,235 +233,142 @@ class Window(QtWidgets.QWidget):
 
     def limpiar_lista_lineas(self):
         for i in reversed(range(self.scroll_vbox.count())): 
-            widget_to_remove = self.scroll_vbox.itemAt(i).widget()
-            if widget_to_remove is not None:
-                widget_to_remove.setParent(None)
-                widget_to_remove.deleteLater()
+            w = self.scroll_vbox.itemAt(i).widget()
+            if w: w.setParent(None); w.deleteLater()
 
     def handleOpen(self):
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Seleccionar Imagen", ".", "Imágenes (*.jpg *.png *.jpeg *.bmp)")
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Seleccionar Imagen", ".", "Imágenes (*.jpg *.png *.jpeg)")
         if path:
-            self._path = path
             img = cv2.imread(path)
             if img is not None:
                 self.OpenCV_image = img
                 self.ActualizarPixMap(self.viewer, self.OpenCV_image)
                 self.botonProcesarImagenEntrada.setEnabled(True)
                 self.botonLimpiar.setEnabled(True)
-                self.viewer2.clear()
-                self.viewer3.clear()
-                self.visorTexto.clear()
-                self.limpiar_lista_lineas()
-                
-                self.palabra_count = 0
-                self.palabra_count_ocr = 0
-                self.caracteres_count_ocr = 0
-                self.actualizar_contadores()
-                
-                self.tabs_derecha.setCurrentIndex(0)
 
     def procesar_todo(self):
         if self.OpenCV_image is None: return
-        
         self.botonProcesarImagenEntrada.setEnabled(False) 
-        self.botonProcesarImagenEntrada.setText("Procesando... ")
         QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        QtWidgets.QApplication.processEvents() 
-
+        
         self.limpiar_lista_lineas()
         self.visorTexto.clear()
-        
+        self.palabra_count = 0
+        self.palabra_count_ocr = 0
+        self.caracteres_count_ocr = 0
+
         img_res = redimensionar(self.OpenCV_image)
-        doc, detectado = extraer_documento(img_res)
-        
-        # 1. Limpiamos la cuadrícula (para que OpenCV encuentre las líneas bien)
+        doc, _ = extraer_documento(img_res)
         self.procesedImage = limpiar_fondo_y_cuadricula(doc) 
         
-        # 2. Pasamos la procesada (para buscar) y el doc original (para recortar a color)
         self.img_lineas, self.img_caracteres, recortes = self.analizar_lineas_y_caracteres(self.procesedImage, doc)
         
         self.ActualizarPixMap(self.viewer2, self.img_lineas)
         self.ActualizarPixMap(self.viewer3, self.img_caracteres)
         
-        # 3. Lanzamos OpenAI
         self.worker = WorkerOpenAI(recortes)
         self.worker.linea_procesada.connect(self.mostrar_resultado_linea)
         self.worker.proceso_terminado.connect(self.finalizar_proceso)
-        self.worker.error_detectado.connect(self.mostrar_error)
         self.worker.start()
 
     def analizar_lineas_y_caracteres(self, img_procesada, img_original):
         gray = cv2.cvtColor(img_procesada, cv2.COLOR_BGR2GRAY)
-        _, bin_img = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        bin_img = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 21, 10)
         
         img_lineas_visual = img_original.copy()
         img_caracteres_visual = img_original.copy()
 
-        # 1. Detectar Párrafos
-        kernel_p = cv2.getStructuringElement(cv2.MORPH_RECT, (50, 30))
-        mask_parrafos = cv2.dilate(bin_img, kernel_p, iterations=1)
+        # Kernels
+        k_parrafo = cv2.getStructuringElement(cv2.MORPH_RECT, (50, 20))
+        k_linea = cv2.getStructuringElement(cv2.MORPH_RECT, (40, 1))
+        k_palabra = cv2.getStructuringElement(cv2.MORPH_RECT, (12, 1))
+        k_char = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+
+        mask_p = cv2.dilate(bin_img, k_parrafo, iterations=1)
+        cnts_p, _ = cv2.findContours(mask_p, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        bboxes_p = sorted([cv2.boundingRect(c) for c in cnts_p], key=lambda b: b[1])
         
-        contornos_p, _ = cv2.findContours(mask_parrafos, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        bboxes_p = [cv2.boundingRect(c) for c in contornos_p]
-        bboxes_p = sorted(bboxes_p, key=lambda b: b[1])
-        
-        self.palabra_count = 0
         lista_recortes = []
 
         for px, py, pw, ph in bboxes_p:
-            if ph < 40 or pw < 40: continue 
+            if ph < 30 or pw < 30: continue
+            roi_p_bin = bin_img[py:py+ph, px:px+pw]
             
-            roi_parrafo_bin = bin_img[py:py+ph, px:px+pw]
-            
-            # 2. Detectar Líneas (1ra Pasada)
-            kernel_l = cv2.getStructuringElement(cv2.MORPH_RECT, (40, 1))
-            mask_lineas = cv2.dilate(roi_parrafo_bin, kernel_l, iterations=1)
-            
-            contornos_l, _ = cv2.findContours(mask_lineas, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            bboxes_l = [cv2.boundingRect(c) for c in contornos_l if cv2.boundingRect(c)[3] >= 10]
-            
-            # --- FASE DE VERIFICACIÓN (RESCATE DE RESIDUOS) ---
-            mascara_verificacion = np.zeros_like(roi_parrafo_bin)
-            for lx, ly, lw, lh in bboxes_l:
-                cv2.rectangle(mascara_verificacion, (lx, ly), (lx + lw, ly + lh), 255, -1)
-                
-            residuos = cv2.bitwise_and(roi_parrafo_bin, cv2.bitwise_not(mascara_verificacion))
-            
-            kernel_rescate = cv2.getStructuringElement(cv2.MORPH_RECT, (20, 1))
-            residuos_dilatados = cv2.dilate(residuos, kernel_rescate, iterations=1)
-            contornos_perdidos, _ = cv2.findContours(residuos_dilatados, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            for c in contornos_perdidos:
-                rx, ry, rw, rh = cv2.boundingRect(c)
-                if rh >= 10 and rw > 20: 
-                    bboxes_l.append((rx, ry, rw, rh))
-            
-            # Ordenar todas las líneas (normales + rescatadas) de arriba hacia abajo
-            bboxes_l = sorted(bboxes_l, key=lambda b: b[1])
+            mask_l = cv2.dilate(roi_p_bin, k_linea, iterations=1)
+            cnts_l, _ = cv2.findContours(mask_l, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            bboxes_l = sorted([cv2.boundingRect(c) for c in cnts_l], key=lambda b: b[1])
             
             for lx, ly, lw, lh in bboxes_l:
-                global_x = px + lx
-                global_y = py + ly
-                
-                cv2.rectangle(img_lineas_visual, (global_x, global_y), (global_x + lw, global_y + lh), (255, 0, 0), 2)
-                
-                # ¡Recorte limpio desde la imagen original!
-                recorte_color = img_original[global_y:global_y+lh, global_x:global_x+lw]
-                lista_recortes.append(recorte_color)
+                if lh < 10: continue
+                gx_l, gy_l = px + lx, py + ly
+                roi_l_bin = bin_img[gy_l:gy_l+lh, gx_l:gx_l+lw]
 
-                # 3. Detectar Caracteres (solo visual)
-                roi_linea_bin = bin_img[global_y:global_y+lh, global_x:global_x+lw]
-                kernel_char = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-                mask_char = cv2.dilate(roi_linea_bin, kernel_char, iterations=1)
-                contornos_char, _ = cv2.findContours(mask_char, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                # --- FILTRO 1: Densidad de píxeles (Evita dibujar si no hay "tinta") ---
+                pixel_density = cv2.countNonZero(roi_l_bin) / (lw * lh)
+                if pixel_density < 0.01: continue 
+
+                lista_recortes.append(img_original[gy_l:gy_l+lh, gx_l:gx_l+lw])
+                cv2.rectangle(img_lineas_visual, (gx_l, gy_l), (gx_l + lw, gy_l + lh), (255, 0, 0), 2)
                 
-                for char_cnt in contornos_char:
-                    cx, cy, cw, ch = cv2.boundingRect(char_cnt)
-                    if cw > 5 and ch > 10:
-                        self.palabra_count += 1
-                        cv2.rectangle(img_caracteres_visual, (global_x + cx, global_y + cy), (global_x + cx + cw, global_y + cy + ch), (0, 200, 0), 1)
+                # Palabras y Caracteres
+                mask_w = cv2.dilate(roi_l_bin, k_palabra, iterations=1)
+                cnts_w, _ = cv2.findContours(mask_w, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                for wx, wy, ww, wh in [cv2.boundingRect(c) for c in cnts_w]:
+                    if ww < 5 or wh < 5: continue
+                    roi_w_bin = roi_l_bin[wy:wy+wh, wx:wx+ww]
+                    mask_c = cv2.dilate(roi_w_bin, k_char, iterations=1)
+                    cnts_c, _ = cv2.findContours(mask_c, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    for cx, cy, cw, ch in [cv2.boundingRect(c) for c in cnts_c]:
+                        if cw > 2 and ch > 8:
+                            self.palabra_count += 1
+                            cv2.rectangle(img_caracteres_visual, (gx_l+wx+cx, gy_l+wy+cy), (gx_l+wx+cx+cw, gy_l+wy+cy+ch), (0, 200, 0), 1)
 
         self.actualizar_contadores()
         return img_lineas_visual, img_caracteres_visual, lista_recortes
 
     def mostrar_resultado_linea(self, index, img_linea, texto):
+        # --- FILTRO 2: Ignorar respuestas de error de OpenAI ---
+        mensajes_invalidos = ["lo siento", "no puedo", "no hay texto", "imagen proporcionada", "lo lamento"]
+        if any(msg in texto.lower() for msg in mensajes_invalidos) or len(texto.strip()) < 1:
+            return
+
         group_box = QtWidgets.QGroupBox(f"LÍNEA {index + 1}:")
-        group_box.setStyleSheet("QGroupBox { font-weight: bold; color: #1E5C94; margin-top: 10px; }")
         layout_h = QtWidgets.QHBoxLayout(group_box)
-        
         lbl_img = QtWidgets.QLabel()
-        lbl_img.setStyleSheet("border: 1px solid #aaa; background-color: white;")
-        height, width, channel = img_linea.shape
-        bytesPerLine = 3 * width
-        rgb_image = cv2.cvtColor(img_linea, cv2.COLOR_BGR2RGB)
-        qImg = QImage(rgb_image.data, width, height, bytesPerLine, QImage.Format.Format_RGB888)
-        pixmap = QPixmap.fromImage(qImg)
-        lbl_img.setPixmap(pixmap.scaledToHeight(50, Qt.TransformationMode.SmoothTransformation))
+        h, w, _ = img_linea.shape
+        qImg = QImage(cv2.cvtColor(img_linea, cv2.COLOR_BGR2RGB).data, w, h, 3*w, QImage.Format.Format_RGB888)
+        lbl_img.setPixmap(QPixmap.fromImage(qImg).scaledToHeight(50, Qt.TransformationMode.SmoothTransformation))
         
         lbl_texto = QtWidgets.QTextEdit()
         lbl_texto.setReadOnly(True)
-        lbl_texto.setText(f"> Texto OpenAI:\n{texto}")
+        lbl_texto.setText(f"> OpenAI: {texto}")
         lbl_texto.setMaximumHeight(60)
-        lbl_texto.setStyleSheet("background-color: #f0f8ff; font-size: 13px; color: #333; border: 1px solid #ccc;")
         
-        layout_h.addWidget(lbl_img)
-        layout_h.addWidget(lbl_texto)
-        layout_h.setStretch(0, 1)
-        layout_h.setStretch(1, 3)
-        
+        layout_h.addWidget(lbl_img, 1)
+        layout_h.addWidget(lbl_texto, 3)
         self.scroll_vbox.addWidget(group_box)
         
-        texto_actual = self.visorTexto.toPlainText()
-        self.visorTexto.setText(texto_actual + texto + "\n")
-        
-        palabras_ocr = texto.split()
-        self.palabra_count_ocr += len(palabras_ocr)
-        
-        texto_limpio = texto.replace(" ", "").replace("\n", "")
-        self.caracteres_count_ocr += len(texto_limpio)
-        
+        self.visorTexto.setText(self.visorTexto.toPlainText() + texto + "\n")
+        self.palabra_count_ocr += len(texto.split())
+        self.caracteres_count_ocr += len(texto.replace(" ", ""))
         self.actualizar_contadores()
 
     def finalizar_proceso(self):
         self.botonProcesarImagenEntrada.setEnabled(True)
-        self.botonProcesarImagenEntrada.setText("Analizar y Transcribir por Líneas (OpenAI)")
         QtWidgets.QApplication.restoreOverrideCursor()
 
-    def mostrar_error(self, error):
-        self.visorTexto.setText(error)
-        self.botonProcesarImagenEntrada.setEnabled(True)
-        self.botonProcesarImagenEntrada.setText("Analizar y Transcribir por Líneas (OpenAI)")
-        QtWidgets.QApplication.restoreOverrideCursor()
-        
     def handleLimpiar(self):
-        self.viewer.clear()
-        self.viewer2.clear()
-        self.viewer3.clear()
+        for v in [self.viewer, self.viewer2, self.viewer3]: v.clear()
         self.visorTexto.clear()
         self.limpiar_lista_lineas()
-        
-        self._path = None
-        self.OpenCV_image = None
-        self.procesedImage = None
-        self.img_lineas = None
-        self.img_caracteres = None
-        
-        self.palabra_count = 0
-        self.palabra_count_ocr = 0
-        self.caracteres_count_ocr = 0
+        self.palabra_count = self.palabra_count_ocr = self.caracteres_count_ocr = 0
         self.actualizar_contadores()
-        
-        self.botonProcesarImagenEntrada.setEnabled(False)
-        self.botonLimpiar.setEnabled(False)
-        
-        self.botonProcesarImagenEntrada.setText("Analizar y Transcribir por Líneas (OpenAI)")
-        while QtWidgets.QApplication.overrideCursor() is not None:
-            QtWidgets.QApplication.restoreOverrideCursor()
 
     def ActualizarPixMap(self, label_target, image):
         if image is None: return
-        height, width, channel = image.shape
-        bytesPerLine = 3 * width
-        rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        
-        qImg = QImage(rgb_image.data, width, height, bytesPerLine, QImage.Format.Format_RGB888)
-        pixmap = QPixmap.fromImage(qImg)
-        
-        scaled_pixmap = pixmap.scaled(
-            label_target.size(), 
-            Qt.AspectRatioMode.KeepAspectRatio, 
-            Qt.TransformationMode.SmoothTransformation
-        )
-        label_target.setPixmap(scaled_pixmap)
-
-    def resizeEvent(self, event):
-        if self.OpenCV_image is not None:
-            self.ActualizarPixMap(self.viewer, self.OpenCV_image)
-        if hasattr(self, 'img_lineas') and self.img_lineas is not None:
-            self.ActualizarPixMap(self.viewer2, self.img_lineas)
-        if hasattr(self, 'img_caracteres') and self.img_caracteres is not None:
-            self.ActualizarPixMap(self.viewer3, self.img_caracteres)
-        super().resizeEvent(event)
+        h, w, _ = image.shape
+        qImg = QImage(cv2.cvtColor(image, cv2.COLOR_BGR2RGB).data, w, h, 3*w, QImage.Format.Format_RGB888)
+        label_target.setPixmap(QPixmap.fromImage(qImg).scaled(label_target.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
 
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
