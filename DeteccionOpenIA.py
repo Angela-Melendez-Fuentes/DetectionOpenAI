@@ -126,6 +126,9 @@ class Window(QtWidgets.QWidget):
         self.img_lineas = None
         self.img_caracteres = None
         
+        # --- NUEVO: Diccionario para evitar duplicados y mantener orden ---
+        self.transcripciones_dict = {}
+        
         self.palabra_count = 0    
         self.palabra_count_ocr = 0 
         self.caracteres_count_ocr = 0 
@@ -253,6 +256,10 @@ class Window(QtWidgets.QWidget):
         
         self.limpiar_lista_lineas()
         self.visorTexto.clear()
+        
+        # --- Resetear Diccionario ---
+        self.transcripciones_dict = {}
+        
         self.palabra_count = 0
         self.palabra_count_ocr = 0
         self.caracteres_count_ocr = 0
@@ -303,7 +310,7 @@ class Window(QtWidgets.QWidget):
                 gx_l, gy_l = px + lx, py + ly
                 roi_l_bin = bin_img[gy_l:gy_l+lh, gx_l:gx_l+lw]
 
-                # --- FILTRO 1: Densidad de píxeles (Evita dibujar si no hay "tinta") ---
+                # --- FILTRO 1: Densidad de píxeles ---
                 pixel_density = cv2.countNonZero(roi_l_bin) / (lw * lh)
                 if pixel_density < 0.01: continue 
 
@@ -327,11 +334,19 @@ class Window(QtWidgets.QWidget):
         return img_lineas_visual, img_caracteres_visual, lista_recortes
 
     def mostrar_resultado_linea(self, index, img_linea, texto):
-        # --- FILTRO 2: Ignorar respuestas de error de OpenAI ---
+        # --- FILTRO 2: Ignorar respuestas de error ---
         mensajes_invalidos = ["lo siento", "no puedo", "no hay texto", "imagen proporcionada", "lo lamento"]
         if any(msg in texto.lower() for msg in mensajes_invalidos) or len(texto.strip()) < 1:
             return
 
+        # --- NUEVO: Guardar en el diccionario para evitar duplicados ---
+        # Si por alguna razón la señal se repite para el mismo index, no hacemos nada
+        if index in self.transcripciones_dict:
+            return
+            
+        self.transcripciones_dict[index] = texto
+
+        # Dibujar en el Scroll (Línea por Línea)
         group_box = QtWidgets.QGroupBox(f"LÍNEA {index + 1}:")
         layout_h = QtWidgets.QHBoxLayout(group_box)
         lbl_img = QtWidgets.QLabel()
@@ -348,9 +363,15 @@ class Window(QtWidgets.QWidget):
         layout_h.addWidget(lbl_texto, 3)
         self.scroll_vbox.addWidget(group_box)
         
-        self.visorTexto.setText(self.visorTexto.toPlainText() + texto + "\n")
-        self.palabra_count_ocr += len(texto.split())
-        self.caracteres_count_ocr += len(texto.replace(" ", ""))
+        # --- RECONSTRUCCIÓN DINÁMICA DEL TEXTO COMPLETO ---
+        # Ordenamos el diccionario por llave (index) y unimos todo con saltos de línea
+        texto_completo_ordenado = "\n".join([self.transcripciones_dict[i] for i in sorted(self.transcripciones_dict.keys())])
+        self.visorTexto.setText(texto_completo_ordenado)
+        
+        # Actualizar contadores basándose en el texto real acumulado
+        palabras_totales = texto_completo_ordenado.split()
+        self.palabra_count_ocr = len(palabras_totales)
+        self.caracteres_count_ocr = len(texto_completo_ordenado.replace(" ", "").replace("\n", ""))
         self.actualizar_contadores()
 
     def finalizar_proceso(self):
@@ -361,6 +382,7 @@ class Window(QtWidgets.QWidget):
         for v in [self.viewer, self.viewer2, self.viewer3]: v.clear()
         self.visorTexto.clear()
         self.limpiar_lista_lineas()
+        self.transcripciones_dict = {} # Limpiar diccionario
         self.palabra_count = self.palabra_count_ocr = self.caracteres_count_ocr = 0
         self.actualizar_contadores()
 
